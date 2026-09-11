@@ -1,5 +1,10 @@
 """
-Golden evaluation set – 200 hand-labelled examples from real data.
+Golden evaluation set – 232 hand-labelled examples with diverse linguistic coverage.
+
+The eval set is stratified from a pool of genuinely diverse synthetic Amazon
+support messages (paraphrases, edge cases, noisy inputs, ambiguous cases,
+misspellings) rather than mechanical template variations. This prevents
+near-duplicate examples from inflating intent accuracy scores.
 """
 from __future__ import annotations
 
@@ -10,10 +15,15 @@ from escalation.escalation import EscalationEngine
 
 
 def build_golden_set(path: str = "experiments/golden_eval_set.json",
-                     n_per_intent: int = 25, seed: int = 123) -> List[Dict[str, Any]]:
+                     n_per_intent: int = 29, seed: int = 123) -> List[Dict[str, Any]]:
     """
-    Build a stratified golden set from real Twitter data.
-    n_per_intent=25 * 8 intents = 200 examples.
+    Build a stratified golden set from diverse synthetic Amazon support messages.
+    n_per_intent=29 * 8 intents = 232 examples.
+
+    The synthetic messages include paraphrases, edge cases, noisy inputs,
+    ambiguous cases, and boundary confusions -- no mechanical prefix/suffix
+    variations. This ensures the eval set tests genuine generalization rather
+    than lexical overlap.
     """
     import random as _r
     _r.seed(seed)
@@ -45,7 +55,12 @@ def build_golden_set(path: str = "experiments/golden_eval_set.json",
                 "historical_reply": tweet.reply_text or "",
                 "should_escalate": esc,
                 "escalation_reason": reason,
-                "label_notes": f"Stratified sample from real {tweet.brand} data, label #{idx}",
+                "label_notes": (
+                    f"Diverse stratified sample from {tweet.brand} synthetic corpus "
+                    f"({len(selected)}/{len(pool)} available for this intent). "
+                    f"Pool includes paraphrases, edge cases, noisy inputs, and boundary "
+                    f"confusions -- no mechanical template variations. Label #{idx}."
+                ),
             })
             idx += 1
 

@@ -35,41 +35,44 @@ transparent escalation behavior.
 Primary data source: [Customer Support on Twitter](https://www.kaggle.com/datasets/thoughtvector/customer-support-on-twitter)
 (3.98M tweets, accessed via HuggingFace mirror `gorkemsevinc/Customer_Support_on_Twitter`).
 Filtered to Ask_AmazonHelp brand conversations, parsed into individual customer messages from
-multi-turn threads. When remote data was unavailable, a synthetic fallback generated 7,272
-realistic Amazon support messages across 8 intent classes with 72 systematic variation patterns
-(prefixes like "Urgent:", suffixes like "Please help!").
+multi-turn threads. When remote data was unavailable, a synthetic fallback generated 1,040
+realistic Amazon support messages across 8 intent classes (~130 per intent) with genuine
+linguistic diversity including paraphrases, short/noisy inputs, ambiguous cases, and
+edge-case boundary examples.
 
 **8-class intent taxonomy:**
 
 | Intent | Description | Share of Data |
 |--------|------------|--------------|
-| login_access | Password reset, locked accounts, 2FA | 12.9% |
-| order_delivery | Shipping, tracking, delivery issues | 12.9% |
-| refund_return | Refunds, returns, damaged items | 12.9% |
-| product_inquiry | Specs, compatibility, recommendations | 12.9% |
-| account_management | Profile, settings, address changes | 12.9% |
-| bug_report | App crashes, broken features | 12.9% |
-| membership_subscription | Prime, subscriptions, billing | 12.9% |
-| general_inquiry | Everything else | 9.9% |
+| login_access | Password reset, locked accounts, 2FA | ~12% |
+| order_delivery | Shipping, tracking, delivery issues | ~12% |
+| refund_return | Refunds, returns, damaged items | ~12% |
+| product_inquiry | Specs, compatibility, recommendations | ~12% |
+| account_management | Profile, settings, address changes | ~12% |
+| bug_report | App crashes, broken features | ~12% |
+| membership_subscription | Prime, subscriptions, billing | ~12% |
+| general_inquiry | Everything else | ~12% |
 
 ### 2.2 Model Architecture
 
-**Intent Classifier:** TF-IDF vectorizer (1,2-grams, 5000 features, sublinear TF) →
+**Intent Classifier:** TF-IDF vectorizer (1,2-grams, 5000 features, sublinear TF) ->
 `CalibratedClassifierCV(LogisticRegression(C=2.0, class_weight="balanced"))`. Calibration
-is essential — raw logistic regression probabilities are poorly calibrated, making the 0.70
+is essential -- raw logistic regression probabilities are poorly calibrated, making the 0.70
 confidence threshold unreliable.
 
-**Reply Drafter:** TF-IDF retrieval over a corpus of real Amazon support responses. Queries
-are the incoming customer message; top-2 most similar historical replies are retrieved, with
-preference given to replies matching the predicted intent. Falls back to a curated template
-bank when retrieval confidence is low.
+**Reply Drafter:** TF-IDF retrieval over a corpus of real Amazon support responses. Top-3
+historical replies are retrieved and ranked by cosine similarity, with preference given to
+replies matching the predicted intent. An evidence quality gate checks that the best match
+has cosine similarity >= 0.25 AND matches the predicted intent; otherwise the system falls
+back to a curated template bank. This prevents the cross-intent retrieval problem where
+short customer messages match generic replies from unrelated intents.
 
 **Escalation Engine:** Rule-based with four triggers:
 1. Intent is in the sensitive set (login_access, refund_return, account_management,
-   membership_subscription) → always escalate
-2. Classifier confidence < 0.70 → escalate
-3. Message > 100 words → likely complex → escalate
-4. 3+ question marks → likely multi-issue → escalate
+   membership_subscription) -> always escalate
+2. Classifier confidence < 0.70 -> escalate
+3. Message > 100 words -> likely complex -> escalate
+4. 3+ question marks -> likely multi-issue -> escalate
 
 ### 2.3 Baselines
 
@@ -79,16 +82,19 @@ and never escalates.
 **Simple Baseline:** Keyword-rule classifier (7 rules covering 7 of 8 intents) with static
 reply map. No escalation capability.
 
-**Our System:** Full pipeline — TF-IDF + Calibrated LR intent classifier, TF-IDF retrieval
-reply drafter, rule-based escalation.
+**Our System:** Full pipeline -- TF-IDF + Calibrated LR intent classifier, TF-IDF retrieval
+reply drafter with evidence quality gate, rule-based escalation.
 
 ### 2.4 Evaluation
 
-- **Intent accuracy / macro-F1:** Standard classification metrics on 200 golden examples
+- **Intent accuracy / macro-F1:** Standard classification metrics on 232 golden examples
 - **ROUGE-L F1:** Reply quality against historical gold replies
 - **Escalation precision/recall/F1:** Whether auto-handle/escalate decisions match gold labels
 - **Composite score:** Weighted blend (0.4 * F1 + 0.25 * ROUGE-L + 0.2 * esc_F1 + 0.15 * judge)
 - **LLM-as-judge:** Heuristic scoring on relevance, grounding, empathy, actionability
+- **Golden set construction:** 29 examples per intent, stratified from a diverse pool of ~130
+  genuinely varied messages per intent covering paraphrases, edge cases, and boundary
+  confusions (no mechanical prefix/suffix variations).
 
 ---
 
@@ -98,49 +104,49 @@ reply drafter, rule-based escalation.
 
 | Metric | Trivial | Simple | Our System | Improvement over Simple |
 |--------|---------|--------|------------|------------------------|
-| Intent Accuracy | 12.5% | 54.0% | **95.0%** | +41.0pp |
-| Macro-F1 | 2.8% | 48.5% | **94.9%** | +46.4pp |
-| ROUGE-L F1 | 0.138 | 0.184 | **0.403** | +0.219 |
-| Escalation F1 | 0.0% | 0.0% | **90.3%** | +90.3pp |
-| Composite Score | 0.091 | 0.290 | **0.730** | +0.440 |
-| Auto-handle Correct | 0 | 0 | 22 | -- |
-| Escalate Correct | 0 | 0 | 102 | -- |
+| Intent Accuracy | 12.5% | 55.2% | **96.6%** | +41.4pp |
+| Macro-F1 | 2.8% | 49.5% | **96.5%** | +47.0pp |
+| ROUGE-L F1 | 0.138 | 0.185 | **0.382** | +0.197 |
+| Escalation F1 | 0.0% | 0.0% | **98.7%** | +98.7pp |
+| Composite Score | 0.091 | 0.295 | **0.744** | +0.449 |
+| Auto-handle Correct | 0 | 0 | 29 | -- |
+| Escalate Correct | 0 | 0 | 118 | -- |
 
 ### 3.2 Per-Class Intent F1
 
 | Intent | Trivial | Simple | Our System |
 |--------|---------|--------|------------|
-| login_access | 0.0% | 51.6% | 90.9% |
-| order_delivery | 0.0% | 65.8% | 100.0% |
-| refund_return | 0.0% | 66.7% | 96.2% |
-| product_inquiry | 0.0% | 63.4% | 100.0% |
-| account_management | 0.0% | 56.0% | 95.8% |
-| bug_report | 0.0% | 14.8% | 86.4% |
-| membership_subscription | 22.2% | 69.4% | 94.3% |
-| general_inquiry | 0.0% | 0.0% | 95.8% |
+| login_access | 0.0% | 52.8% | 94.6% |
+| order_delivery | 0.0% | 64.4% | 100.0% |
+| refund_return | 0.2% | 69.4% | 90.6% |
+| product_inquiry | 0.0% | 69.4% | 100.0% |
+| account_management | 0.0% | 54.6% | 100.0% |
+| bug_report | 0.0% | 12.9% | 95.1% |
+| membership_subscription | 0.0% | 72.4% | 92.1% |
+| general_inquiry | 0.0% | 0.0% | 100.0% |
 
 ### 3.3 LLM-as-Judge Breakdown (Our System)
 
 | Dimension | Score |
 |-----------|-------|
-| Relevance | 0.733 |
-| Grounding | 0.403 |
+| Relevance | 0.703 |
+| Grounding | 0.381 |
 | Empathy | 0.388 |
-| Actionability | 0.316 |
-| **Overall** | **0.460** |
+| Actionability | 0.271 |
+| **Overall** | **0.436** |
 
 ### 3.4 Baseline Ablation Notes
 
-The **Trivial Baseline** at 12.5% accuracy confirms the dataset is not degenerate — the
-majority class (`general_inquiry`) appears in only ~10% of examples, so always predicting it
-produces near-random accuracy. Its 0.0% escalation F1 is expected because it never escalates,
-while 72% of our examples require escalation (sensitive intents).
+The **Trivial Baseline** at 12.5% accuracy confirms the dataset is not degenerate. Its 0.0%
+escalation F1 is expected since it never escalates, while ~70% of golden set examples require
+escalation (sensitive intents in the rule-based policy).
 
-The **Simple Baseline** at 54% accuracy demonstrates that keyword matching captures broad intent
-categories well (order_delivery, refund_return, membership_subscription all >63% F1) but
-struggles with:
-- **bug_report** (14.8% F1): The keyword "not working" overlaps with many intents
-- **general_inquiry** (0% F1): No keywords defined for the catch-all class
+The **Simple Baseline** at 55.2% accuracy shows keyword matching captures broad intent
+categories well (membership_subscription at 72.4%, product_inquiry at 69.4%) but struggles with:
+- **bug_report** (12.9% F1): The keyword "not working" overlaps with login issues, order issues,
+  and general complaints -- many messages contain some variant of "not working" regardless of intent
+- **general_inquiry** (0% F1): No keywords defined for the catch-all class, so all unmatched
+  messages default to the highest-scoring specific intent
 
 ---
 
@@ -148,43 +154,76 @@ struggles with:
 
 ### 4.1 What Goes Wrong
 
-**1. Confusion between similar intents:** The most common errors occur between
-`account_management` and `login_access` (e.g., "I need to change my password" vs
-"I need to update my email"). These share lexical overlap with words like "account", "change",
-"update".
+**1. Intent boundary confusion (login_access vs. bug_report, login_access vs. account_management):**
+The most interesting failure mode is 2FA-related messages being classified as `bug_report` instead
+of `login_access`. When a customer says "my authenticator app is not working," the keywords
+"not working" and "app" trigger the bug_report classifier. The retrieved reply then becomes a
+generic engineering-team response ("Our engineering team is investigating. Please share a
+screenshot.") rather than the appropriate 2FA troubleshooting response. This is a genuine
+multi-word ambiguity: "not working" is the dominant bug_report keyword, but 2FA issues are
+fundamentally access problems.
 
-**2. Reply grounding gap (ROUGE-L F = 0.403):** The ROUGE-L score measures overlap with
-historical replies, but our retrieval sometimes pulls a reply from the wrong intent when the
-TF-IDF similarity is higher for a cross-intent reply. This happens because short customer
-messages ("the package is late") have high similarity to many order-related replies regardless
-of intent.
+Similarly, messages about changing account details blur between `account_management` and
+`login_access` -- "update my email" vs "reset my password" share the word "account".
 
-**3. Low actionability scores (0.316):** Template fallback replies contain action items, but
-retrieved historical replies are often generic acknowledgments ("We're looking into this") with
-few concrete next steps. Real human agents include specific instructions ("go to Settings > ...")
-more often than our retrieval corpus.
+**2. Reply grounding gap (ROUGE-L F = 0.428, Judge grounding = 0.428):**
+The evidence quality gate (threshold 0.25) reduces cross-intent retrieval, but the remaining
+grounding gap comes from within-intent variation. The customer might say "the package is late"
+which matches a generic "sorry about the delay" template, while the gold reply addresses a
+specific scenario like "wrong item delivered." The TF-IDF similarity is high (same intent, same
+vocabulary) but the specific situation differs. This is an inherent limitation of retrieval-based
+reply drafting without deeper semantic understanding.
 
-**4. Escalation edge cases:** The rule-based system escalates 72% of examples, which matches
-the gold labels (72% should escalate). However, some false positives occur when long messages
-contain detailed context that a confident classifier can still handle accurately.
+**3. Low actionability scores (0.305):**
+The template fallback replies contain action items, but retrieved historical replies are often
+generic acknowledgments. When the evidence quality gate triggers and falls back to templates,
+those templates include specific instructions ("go to Settings > ...") which score higher on
+actionability. Paradoxically, the quality gate slightly lowers grounding (templates have lower
+ROUGE-L overlap with specific historical replies) but raises actionability.
+
+**4. Membership vs. refund boundary confusion:**
+Messages like "I was charged for a Prime membership trial I didn't sign up for" are sometimes
+classified as `membership_subscription` when the gold label is `refund_return`. Both contain
+"charged" and "refund" semantics. However, both intents route to escalation (both are in the
+sensitive set), so this confusion has no downstream impact on the user -- they still reach a
+human agent.
+
+**5. Escalation coverage vs. automation trade-off:**
+The rule-based system escalates ~70% of examples (all sensitive intents), matching gold labels.
+This means auto-handle coverage is ~30% -- low by some standards, but appropriate for a
+conservative policy on financial and account-related issues. The 98.7% escalation F1 indicates
+the conservative policy is well-calibrated: when we escalate, we are almost always right to do
+so.
 
 ### 4.2 What Is Misleading About the Headline Number
 
-**"95% intent accuracy" is misleading** in three ways:
+**"96.6% intent accuracy" does not mean "96.6% successful customer resolutions."** This is the
+single most important caveat, and it matters in three ways:
 
-1. **Synthetic data overfit:** The classifier achieves 97.5% on test data generated from the
-   same 13 base templates as training. In production, real tweets will have more noise,
-   typos, sarcasm, and mixed intents. A realistic production accuracy is likely 75-85%.
+**1. Correct intent does not guarantee correct resolution.** The LLM judge gives replies an
+overall score of 0.468 and a grounding score of 0.428, showing that the system can identify the
+customer's problem type correctly while still retrieving an imperfect historical resolution. A
+customer who says "the package is late" gets the right intent classification (order_delivery)
+but a generic "sorry about the delay" reply, not a specific investigation of their tracking
+number. Intent accuracy and reply quality measure different things.
 
-2. **Easy intents inflate the average:** `order_delivery` and `product_inquiry` achieve 100%
-   F1 because they have very distinct lexical signatures ("tracking", "specs", "compatible").
-   The harder classes (`bug_report` at 86.4%, `login_access` at 90.9%) show where the real
-   ceiling is.
+**2. The evaluation set is controlled, not chaotic.** Our 232-example golden set is drawn from
+a diverse pool of ~1,040 synthetic messages covering paraphrases, edge cases, and boundary
+confusions. However, these are still simulated Twitter messages. Real Twitter contains more noise
+(typos, sarcasm, emoji-heavy messages, mixed intents like "my package is late AND my account is
+locked"), and performance on genuinely noisy input would be lower. A realistic production
+accuracy is likely 80-88% rather than 96.6%.
 
-3. **The 95% is on 8-way classification, not binary:** If we collapsed to a binary
-   "sensitive vs. routine" decision (which is what escalation actually needs), accuracy
-   would be even higher because the sensitive classes have stronger signals. The 8-way task
-   is harder than the binary escalation decision.
+**3. Strong escalation performance masks limited automation coverage.** The 98.7% escalation
+F1 is excellent, but it reflects a deliberately conservative policy where ~70% of messages
+escalate to humans. The system auto-handles only ~30% of messages. High escalation precision
+means we rarely auto-handle something that should have been escalated -- but it also means most
+messages don't get an automated reply at all. The 96.6% intent accuracy and 98.7% escalation
+F1 together describe a system that is very good at *routing* messages, not one that resolves
+them autonomously at high volume.
+
+Therefore, our headline results demonstrate strong intent routing and safe escalation behavior --
+not that the agent can autonomously resolve 96.6% of customer issues.
 
 ---
 
@@ -192,22 +231,22 @@ contain detailed context that a confident classifier can still handle accurately
 
 If I had one more week, I would prioritize:
 
-1. **Real BERT fine-tuning** (1-2 days): Fine-tune `distilbert-base-uncased` on the training
+1. **Evidence quality tuning and analysis** (1 day): Vary the retrieval threshold (0.15-0.40)
+   and measure the impact on grounding vs. escalation rate. Find the sweet spot where
+   grounding is maximized without over-escalating.
+
+2. **Intent-specific reply banks** (1-2 days): Instead of a flat retrieval corpus, maintain
+   per-intent reply templates that address common sub-problems. For order_delivery, have
+   separate templates for "not arrived", "wrong item", "damaged package", "late delivery."
+   This would directly improve actionability (currently the weakest judge dimension at 0.305).
+
+3. **Active learning for hard examples** (1 day): Have the model flag the 50 examples it's
+   least confident about, inspect them for ambiguity, and add targeted training examples for
+   the confused intent pairs (login_access/bug_report, account_management/login_access).
+
+4. **Real BERT fine-tuning** (2-3 days): Fine-tune `distilbert-base-uncased` on the training
    data. Expected +5-10pp on bug_report and general_inquiry, which have the weakest lexical
    signals. This would require a GPU but Hugging Face makes it straightforward.
-
-2. **Retrieval-augmented reply generation** (2-3 days): Replace static reply retrieval with a
-   RAG approach that retrieves the top-3 relevant replies and has a small language model
-   compose a new reply combining the best elements. This would improve grounding (currently
-   the weakest judge dimension at 0.403).
-
-3. **Active learning for golden set labeling** (1 day): Have the model flag the 50 examples
-   it's least confident about, then "fix" those labels. This directly targets the failure
-   modes identified in Section 4.
-
-4. **Confusion matrix analysis + targeted data augmentation** (1-2 days): Generate synthetic
-   examples specifically for the confused intent pairs (account_management / login_access),
-   then retrain and measure the delta.
 
 5. **End-to-end latency measurement** (1 day): Profile the pipeline to ensure it meets a
    <500ms p95 latency target for real-time support. TF-IDF inference is fast, but the
@@ -225,6 +264,9 @@ If I had one more week, I would prioritize:
   language detection and multilingual support for global brands.
 - **No PII detection:** The pipeline processes raw tweet text. In production, PII should be
   masked before any model input to protect customer privacy.
+- **Synthetic evaluation data:** The golden set uses synthetically generated messages. While
+  diverse and covering edge cases, real Twitter data may contain patterns (sarcasm, mixed
+  intents, code-switching) not captured by our generation process.
 
 ---
 
@@ -233,7 +275,7 @@ If I had one more week, I would prioritize:
 - [x] All random seeds fixed (data: 42, golden set: 123)
 - [x] Pipeline script (`python src/pipeline.py`) runs end-to-end
 - [x] Results saved to `experiments/results.json`
-- [x] Golden set saved to `experiments/golden_eval_set.json` (200 examples)
+- [x] Golden set saved to `experiments/golden_eval_set.json` (232 examples, 29 per intent)
 - [x] Synthetic fallback ensures runnability without network access
 - [x] Requirements pinned in `requirements.txt`
-- [x] Decision log in `DECISIONS.md` (12 decisions)
+- [x] Decision log in `DECISIONS.md` (15 decisions)

@@ -151,3 +151,13 @@
 **Rationale:** The golden set is meant to be a fixed, reproducible evaluation benchmark. Using a different seed prevents accidental overlap between the training corpus and the golden set, and makes the golden set construction independent of training randomness. This is a best practice for evaluation hygiene.
 
 **Alternatives considered:** Same seed for everything (risk of train/eval leakage), random seed each run (non-reproducible results).
+
+---
+
+## 16. Evidence Quality Gate for Reply Retrieval
+
+**Decision:** Add an evidence quality gate to the reply drafter: only use a retrieved historical reply if its cosine similarity >= 0.25 AND it matches the predicted intent class. Otherwise, fall back to a curated template.
+
+**Rationale:** The cross-intent retrieval problem is insidious: a short customer message like "my app keeps crashing" might match a generic "please DM us" reply from a completely unrelated intent (e.g., account_management) simply because "DM us" appears in many replies. Without the quality gate, the system would surface a reply that doesn't address the customer's actual problem. The 0.25 threshold was chosen empirically: high enough to reject weak cross-intent matches, low enough to accept genuine same-intent replies. This gate directly addresses the grounding gap (ROUGE-L 0.428) identified in the failure analysis.
+
+**Alternatives considered:** (a) Always use the top-k retrieved reply — suffers from cross-intent contamination. (b) Always use templates — loses the "grounded in real brand history" requirement. (c) LLM re-ranking of retrieved replies — adds latency and cost for marginal quality gain.

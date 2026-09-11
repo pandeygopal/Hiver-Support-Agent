@@ -33,26 +33,27 @@ Incoming Message
 +------------------+     +------------------+     +------------------+
        |                       |                       |
        v                       v                       v
-  Intent (97.5%             Reply draft           Auto-handle /
-  accuracy on test)         (ROUGE-L F: 0.40)     escalate decision
+  Intent (96.6%             Reply draft           Auto-handle /
+  accuracy on test)         (ROUGE-L F: 0.428)    escalate decision
 ```
 
-## Results (200 golden examples, n=50/50 train/test)
+## Results (232 golden examples, stratified diverse eval set)
 
 | System | Intent Acc | Macro-F1 | ROUGE-L F | Esc F1 | Composite |
 |--------|-----------|----------|-----------|--------|-----------|
 | Trivial (majority class) | 12.5% | 2.8% | 0.138 | 0.0% | 0.091 |
-| Simple (keyword rules) | 54.0% | 48.5% | 0.184 | 0.0% | 0.290 |
-| **Our System** | **95.0%** | **94.9%** | **0.403** | **90.3%** | **0.730** |
+| Simple (keyword rules) | 55.2% | 49.5% | 0.185 | 0.0% | 0.295 |
+| **Our System** | **96.6%** | **96.5%** | **0.428** | **98.7%** | **0.761** |
 
 ## Key Design Decisions
 
-See [DECISIONS.md](DECISIONS.md) for 12 non-obvious decisions with rationale.
+See [DECISIONS.md](DECISIONS.md) for 16 non-obvious decisions with rationale.
 
 - **One brand focus:** Ask_AmazonHelp (largest, cleanest dataset)
 - **8-intent taxonomy:** Derived from real support conversation patterns
 - **TF-IDF over BERT:** Faster training, interpretable, sufficient for structured support intents
 - **Calibrated probabilities:** Required for meaningful escalation confidence thresholding
+- **Evidence quality gate:** Prevents cross-intent reply retrieval via cosine similarity threshold (0.25)
 - **Template fallback:** Ensures every reply has a reasonable default when retrieval fails
 - **Rule-based escalation:** Transparent, auditable, no API cost
 

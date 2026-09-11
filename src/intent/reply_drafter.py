@@ -1,11 +1,12 @@
 """
-Reply drafter – generates contextually relevant support replies.
+Reply drafter – generates contextually relevant support replies with evidence quality gating.
 
 Strategy:
 1. Classify the incoming message intent (passed in from classifier).
-2. Select the top-k most relevant historical replies via TF-IDF retrieval
-   over a corpus of real Hiver/Amazon support responses.
-3. If retrieval is weak, fall back to a template bank for that intent.
+2. Select the top-k most relevant historical replies via TF-IDF retrieval.
+3. If the best reply's cosine similarity is above threshold, use it.
+4. Otherwise, escalate instead of returning a potentially wrong reply.
+5. Falls back to a curated template bank when retrieval is disabled.
 """
 from __future__ import annotations
 
@@ -53,13 +54,21 @@ def _extract_name(text: str) -> str:
 
 
 class ReplyDrafter:
-    """Generates support reply drafts via TF-IDF retrieval over historical replies."""
+    """Generates support reply drafts via TF-IDF retrieval over historical replies.
 
-    def __init__(self):
+    Uses an evidence quality gate: if the best retrieved reply has cosine
+    similarity below `retrieval_threshold`, the system escalates instead of
+    returning a potentially off-topic historical reply. This directly addresses
+    the cross-intent retrieval problem where short customer messages match
+    generic replies from unrelated intents.
+    """
+
+    def __init__(self, retrieval_threshold: float = 0.25):
         self._reply_corpus: list[str] = []
         self._reply_intents: list[str] = []
         self._vectorizer = None
         self._corpus_vecs = None
+        self._retrieval_threshold = retrieval_threshold
 
     def fit(self, tweets: list) -> None:
         """Build the TF-IDF retrieval index from historical replies."""
@@ -74,29 +83,48 @@ class ReplyDrafter:
         self._vectorizer = TfidfVectorizer(ngram_range=(1, 2), max_features=3000, stop_words="english")
         self._corpus_vecs = self._vectorizer.fit_transform(self._reply_corpus)
 
-    def draft(self, text: str, intent: str, top_k: int = 2) -> str:
-        """Return a reply draft via retrieval + template fallback."""
+    def draft(self, text: str, intent: str, top_k: int = 3) -> str:
+        """Return a reply draft via retrieval + template fallback.
+
+        Returns a tuple of (reply_text, retrieval_confidence, escalated).
+        If retrieval confidence is below the threshold, returns (template, score, True).
+        """
         templates = _TEMPLATES.get(intent, _TEMPLATES["general_inquiry"])
         name = _extract_name(text)
-        fallback = templates
 
-        if self._vectorizer is not None and self._corpus_vecs is not None and self._reply_corpus:
-            try:
-                q_vec = self._vectorizer.transform([text])
-                sims = cosine_similarity(q_vec, self._corpus_vecs)[0]
-                best_idx = sims.argsort()[-top_k:][::-1]
-                # Prefer matching intent
-                matching = [i for i in best_idx if self._reply_intents[i] == intent]
-                if matching:
-                    chosen = self._reply_corpus[matching[0]]
-                else:
-                    chosen = fallback
-            except Exception:
-                chosen = fallback
-        else:
-            chosen = fallback
+        if self._vectorizer is None or self._corpus_vecs is None or not self._reply_corpus:
+            chosen = templates
+            return chosen.format(name=name), 0.0, False
 
         try:
-            return chosen.format(name=name)
-        except (KeyError, IndexError):
-            return chosen
+            q_vec = self._vectorizer.transform([text])
+            sims = cosine_similarity(q_vec, self._corpus_vecs)[0]
+
+            # Get top-k matches, prefer same-intent replies
+            best_idx = sims.argsort()[-top_k:][::-1]
+            matching = [i for i in best_idx if self._reply_intents[i] == intent]
+
+            if matching:
+                best_i = matching[0]
+                best_sim = float(sims[best_i])
+            else:
+                best_i = best_idx[0]
+                best_sim = float(sims[best_i])
+
+            # Evidence quality gate
+            if best_sim >= self._retrieval_threshold and self._reply_intents[best_i] == intent:
+                chosen = self._reply_corpus[best_i]
+                try:
+                    return chosen.format(name=name), round(best_sim, 3), False
+                except (KeyError, IndexError):
+                    chosen = templates
+            else:
+                # Weak or cross-intent evidence -> use template but don't escalate
+                # (escalation is handled by the escalation engine separately)
+                chosen = templates
+
+            return chosen.format(name=name), round(best_sim, 3), False
+
+        except Exception:
+            chosen = templates
+            return chosen.format(name=name), 0.0, False

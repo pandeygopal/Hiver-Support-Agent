@@ -105,12 +105,13 @@ class OurSystem:
 
     def predict(self, text: str) -> Dict:
         intent, conf = self.classifier.predict(text)
-        reply = self.drafter.draft(text, intent)
+        reply, retr_conf, _ = self.drafter.draft(text, intent)
         esc, reason = self.escalation.should_escalate(text, intent, conf)
         return {
             "intent": intent,
             "intent_confidence": round(conf, 3),
             "reply_text": reply,
+            "retrieval_confidence": round(retr_conf, 3),
             "escalate": esc,
             "escalation_reason": reason,
         }
